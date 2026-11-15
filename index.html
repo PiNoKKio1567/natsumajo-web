@@ -217,6 +217,39 @@ async function importPortableSave(engine) {
   return jobs.length;
 }
 
+// One connection to a CDN gets throttled, and this pack is 528 MB, so the loader's single
+// sequential download crawls. Asking for parallel byte ranges instead — each response written
+// straight into its own slice of one buffer — turns N throttled connections into one fast
+// stream. Falls back to a plain download if the host will not serve ranges.
+const PACK_URL = GODOT_CONFIG.mainPack;
+const PACK_SIZE = GODOT_CONFIG.fileSizes[PACK_URL];
+const PACK_STREAMS = 6;
+
+async function fetchPack(onProgress) {
+  const buf = new Uint8Array(PACK_SIZE);
+  const step = Math.ceil(PACK_SIZE / PACK_STREAMS);
+  let got = 0;
+  const parts = [];
+  for (let from = 0; from < PACK_SIZE; from += step) {
+    parts.push([from, Math.min(PACK_SIZE, from + step) - 1]);
+  }
+  await Promise.all(parts.map(async ([from, to]) => {
+    const res = await fetch(PACK_URL, { headers: { Range: 'bytes=' + from + '-' + to } });
+    if (res.status !== 206) throw new Error('this host does not serve byte ranges');
+    const reader = res.body.getReader();
+    let at = from;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf.set(value, at);
+      at += value.length;
+      got += value.length;
+      onProgress(got);
+    }
+  }));
+  return buf;
+}
+
 function boot() {
   startEl.remove();
   loadEl.classList.add('on');
@@ -235,17 +268,31 @@ function boot() {
   (window.__audioContexts || []).forEach((c) => { if (c.state === 'suspended') c.resume().catch(() => {}); });
 
   pctEl.textContent = '加载引擎…';
-  const sizing = { onProgress: function (current, total) {
-      if (current > 0 && total > 0) {
-        barEl.style.width = (current / total * 100).toFixed(1) + '%';
-        pctEl.textContent = (current / 1048576).toFixed(0) + ' / ' + (total / 1048576).toFixed(0) + ' MB';
-      }
-    } };
+  const showProgress = (got, total) => {
+    if (got > 0 && total > 0) {
+      barEl.style.width = (got / total * 100).toFixed(1) + '%';
+      pctEl.textContent = (got / 1048576).toFixed(0) + ' / ' + (total / 1048576).toFixed(0) + ' MB';
+    }
+  };
+  const sizing = { onProgress: showProgress };
 
   engine.init('godot')
     .then(() => importPortableSave(engine))
-    .then(() => {
+    .then(async () => {
       pctEl.textContent = '读取游戏数据…';
+      let pack = null;
+      try {
+        pack = await fetchPack(showProgress);
+      } catch (e) {
+        console.warn('并行读取失败，改走单连接：', e);
+      }
+      if (pack) {
+        // Hand the pack over as memory, then make sure the loader does not download it again.
+        await engine.preloadFile(pack.buffer, PACK_URL);
+        const nativePreload = engine.preloadFile.bind(engine);
+        engine.preloadFile = (file, path) =>
+          (file === PACK_URL ? Promise.resolve() : nativePreload(file, path));
+      }
       return engine.startGame(sizing);
     })
     .then(() => {
