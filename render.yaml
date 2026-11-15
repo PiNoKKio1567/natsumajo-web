@@ -1,0 +1,32 @@
+# Render static site.
+# game.pck is 553 MB, which is far past what a Git repository accepts, so it is published as a
+# GitHub Release asset and pulled in during the build; the repo itself stays small and clonable.
+services:
+  - type: web
+    name: natsumajo
+    runtime: static
+    buildCommand: >
+      (curl -fL -o game.pck "$PCK_URL" || wget -qO game.pck "$PCK_URL")
+      && ls -l game.pck
+    staticPublishPath: .
+    envVars:
+      - key: PCK_URL
+        sync: false
+    headers:
+      # Godot's threaded web build needs a cross-origin isolated page for SharedArrayBuffer.
+      - path: /*
+        name: Cross-Origin-Opener-Policy
+        value: same-origin
+      - path: /*
+        name: Cross-Origin-Embedder-Policy
+        value: require-corp
+      - path: /*
+        name: Cross-Origin-Resource-Policy
+        value: same-origin
+      # The pack never changes once published; let the browser keep it.
+      - path: /game.pck
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+      - path: /godot.wasm
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
