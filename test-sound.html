@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>声音自检</title>
+<style>
+  body{margin:0;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;
+       background:#141018;color:#f3e9d8;font:16px/1.7 "Microsoft YaHei",system-ui,sans-serif}
+  h1{font-size:22px;font-weight:600;margin:0 0 6px}
+  p.sub{margin:0 0 28px;color:#a99bb5}
+  button{font:18px "Microsoft YaHei",sans-serif;padding:14px 44px;border-radius:10px;border:0;cursor:pointer;
+         background:#d98a4a;color:#20140c;font-weight:700}
+  button:active{transform:translateY(1px)}
+  #log{margin-top:26px;font:13px/1.9 Consolas,monospace;color:#8fd0b0;white-space:pre;min-height:120px}
+  .row{margin-top:8px;color:#a99bb5;font-size:13px}
+  .bar{width:min(520px,80vw);height:10px;border-radius:5px;background:#2a2233;overflow:hidden;margin-top:22px}
+  .bar i{display:block;height:100%;width:0;background:#8fd0b0;transition:width .1s}
+</style>
+</head>
+<body>
+<h1>声音自检</h1>
+<p class="sub">点下面的按钮，应该听到 3 秒的「嘟——」</p>
+<button id="go">播放测试音</button>
+<div class="bar"><i id="lvl"></i></div>
+<div id="log">等待点击…</div>
+<div class="row">如果这个页面也听不到，就说明不是游戏的问题，是浏览器/系统的声音通道。</div>
+
+<script>
+const logEl = document.getElementById('log');
+const lvlEl = document.getElementById('lvl');
+function log(s) { logEl.textContent += '\n' + s; }
+
+document.getElementById('go').addEventListener('click', async () => {
+  logEl.textContent = '开始…';
+  let ctx;
+  try {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    log('AudioContext: ' + ctx.state + ' / ' + ctx.sampleRate + 'Hz');
+    if (ctx.state !== 'running') { await ctx.resume(); log('resume() -> ' + ctx.state); }
+
+    // Tapping the analyser proves the graph runs; it does not prove anyone hears it.
+    const an = ctx.createAnalyser(); an.fftSize = 2048;
+    an.connect(ctx.destination);
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    g.gain.value = 0.25;
+    osc.frequency.value = 440;
+    osc.connect(g); g.connect(an);
+    osc.start();
+    log('振荡器已启动，增益 0.25');
+
+    const t0 = ctx.currentTime;
+    const timer = setInterval(() => {
+      const b = new Float32Array(an.fftSize); an.getFloatTimeDomainData(b);
+      let s = 0, pk = 0;
+      for (let i = 0; i < b.length; i++) { s += b[i]*b[i]; if (Math.abs(b[i]) > pk) pk = Math.abs(b[i]); }
+      const rms = Math.sqrt(s / b.length);
+      lvlEl.style.width = Math.min(100, rms * 180) + '%';
+      log('t=' + (ctx.currentTime - t0).toFixed(1) + 's  rms=' + rms.toFixed(4) + '  peak=' + pk.toFixed(3));
+    }, 500);
+
+    setTimeout(() => { osc.stop(); clearInterval(timer); log('结束。听见了吗？'); }, 3000);
+  } catch (e) {
+    log('ERROR: ' + e);
+  }
+});
+</script>
+</body>
+</html>

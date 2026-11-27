@@ -128,6 +128,15 @@
   <div id="notice"></div>
 </div>
 
+<script>
+window.CLOUDSAVE = {
+  url: 'https://cloudsave-iskz.onrender.com',
+  game: 'fushidara',
+  dir: '/userfs/Godot/app_userdata/GodotEra',
+  files: ["progress.json", "save_1.json", "save_auto.json", "options.json", "last_settings.json"],
+};
+</script>
+<script src="/cloudsave.js"></script>
 <script src="godot.js"></script>
 <script>
 const GODOT_THREADS_ENABLED = true;
@@ -151,23 +160,35 @@ const noticeEl = document.getElementById('notice');
 
 // Left empty the page is open to anyone holding the URL. Set it to a phrase and the panel asks
 // for that phrase once per browser first — enough to keep a public link from being casually shared.
-const ACCESS_CODE = '';
-
-function applyGate() {
-  if (!ACCESS_CODE || localStorage.getItem('fushidara.pass') === ACCESS_CODE) return;
+// 云存档口令：第一次进来问一次，之后记在浏览器里。口令本身是 server 的 SAVE_KEY。
+async function applyGate() {
+  if (!window.CloudSave) return;
   const gateEl = document.getElementById('gate');
   const codeEl = document.getElementById('code');
   const errEl = document.getElementById('gateErr');
-  gateEl.style.display = 'flex';
-  startEl.style.display = 'none';
-  const tryUnlock = () => {
-    if (codeEl.value === ACCESS_CODE) {
-      localStorage.setItem('fushidara.pass', codeEl.value);
-      gateEl.style.display = 'none';
-      startEl.style.display = '';
-    } else {
+  const ask = (msg) => {
+    gateEl.style.display = 'flex';
+    startEl.style.display = 'none';
+    if (msg) errEl.textContent = msg;
+  };
+  if (CloudSave.hasKey()) {
+    const st = await CloudSave.checkKey();
+    if (st === 'ok' || st === 'offline') return;
+    CloudSave.clearKey();
+  }
+  ask('云存档口令（只问一次）');
+  const tryUnlock = async () => {
+    const v = codeEl.value.trim();
+    if (!v) return;
+    CloudSave.setKey(v);
+    const st = await CloudSave.checkKey();
+    if (st === 'wrong') {
+      CloudSave.clearKey();
       errEl.textContent = '口令不对';
+      return;
     }
+    gateEl.style.display = 'none';
+    startEl.style.display = '';
   };
   document.getElementById('unlock').addEventListener('click', tryUnlock);
   codeEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') tryUnlock(); });
@@ -349,6 +370,9 @@ function boot() {
 
   engine.init('godot')
     .then(() => importPortableSave(engine))
+    .then(() => (window.CloudSave
+      ? CloudSave.pull(engine).catch((e) => console.warn('云存档没取到：', e && e.message))
+      : null))
     .then(async () => {
       pctEl.textContent = '读取游戏数据…';
       let pack = null;
@@ -369,6 +393,7 @@ function boot() {
     .then(() => {
       barEl.style.width = '100%';
       pctEl.textContent = '完成';
+      if (window.CloudSave) CloudSave.start(engine);
       setTimeout(() => bootEl.classList.add('gone'), 350);
       canvasEl.focus();
       (window.__audioContexts || []).forEach((c) => { if (c.state === 'suspended') c.resume().catch(() => {}); });
