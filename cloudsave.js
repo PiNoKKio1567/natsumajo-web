@@ -128,6 +128,7 @@
       n++;
     }
     localStorage.setItem(APPLIED, data.updated);
+    localStorage.setItem(SENT, await stamp()); // 刚拉下来的就是「已经同步过」的状态
     return 'pulled ' + n;
   }
 
@@ -138,7 +139,12 @@
     if (res.status === 401) return 'key';
     if (res.ok) {
       const data = await res.json().catch(() => null);
-      if (data && data.updated && data.updated !== localStorage.getItem(APPLIED)) return 'remote-newer';
+      // 云端有东西却没读到版本号 = 服务端读坏了，宁可这次不推，也不能拿本地旧档盖上去
+      if (!data || !data.updated) return 'bad-remote';
+      // 云端比本地新（或本地这台还没拉过）就先让上层去拉，避免把另一台设备的进度盖掉
+      if (data.updated !== localStorage.getItem(APPLIED)) return 'remote-newer';
+    } else if (res.status !== 404) {
+      return 'no-cloud ' + res.status;
     }
     const out = {};
     for (const name of files) {

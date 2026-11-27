@@ -32,12 +32,22 @@ function gh(method, path, body) {
   });
 }
 
+// 注意：contents API 对 >1MB 的文件返回 content:""，得再用 git/blobs 取一次
+// （存档 JSON 是 base64 包的，涨得很快，早就过 1MB 了）。
 async function readStore(game) {
   const res = await gh('GET', `/repos/${REPO}/contents/${DIR}/${game}.json`);
   if (res.status === 404) return { sha: null, data: null };
   if (!res.ok) throw new Error(`github read ${res.status}`);
   const j = await res.json();
-  const raw = Buffer.from(j.content || '', 'base64').toString('utf8');
+  let raw;
+  if (j.content) {
+    raw = Buffer.from(j.content, 'base64').toString('utf8');
+  } else {
+    const blob = await gh('GET', `/repos/${REPO}/git/blobs/${j.sha}`);
+    if (!blob.ok) throw new Error(`github blob ${blob.status}`);
+    const bj = await blob.json();
+    raw = Buffer.from(bj.content || '', 'base64').toString('utf8');
+  }
   return { sha: j.sha, data: JSON.parse(raw || '{}') };
 }
 
