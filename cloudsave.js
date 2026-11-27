@@ -99,6 +99,18 @@
     return bits.join('|');
   }
 
+  // 本地这几个存档里最新的一次修改时间（毫秒）。本地比云端新的时候，
+  // 不能拿云端去盖它 —— 那是主人刚存下来的进度。
+  async function newestLocalTs() {
+    let best = 0;
+    for (const name of files) {
+      const rec = await readLocal(name);
+      const ts = rec && rec.mtime ? rec.mtime : 0;
+      if (ts > best) best = ts;
+    }
+    return best;
+  }
+
   async function call(method, body) {
     const headers = { 'content-type': 'application/json' };
     if (key()) headers['x-save-key'] = key();
@@ -116,6 +128,12 @@
     const data = await res.json();
     if (!data || !data.files) return 'empty';
     if (localStorage.getItem(APPLIED) === data.updated) return 'same';
+    const cloudTs = Date.parse(data.updated) || 0;
+    const localTs = await newestLocalTs();
+    // 只有「这台设备以前同步过」时才比较新旧：刚导入的种子文件时间也是新的，不能算数
+    const synced = !!localStorage.getItem(APPLIED);
+    // 本地有比云端更新的存档（刚存的），先别盖，交给上层推上去
+    if (synced && localTs && cloudTs && localTs > cloudTs) return 'local-newer';
     let n = 0;
     for (const name of files) {
       const enc = data.files[name];
@@ -142,7 +160,13 @@
       // 云端有东西却没读到版本号 = 服务端读坏了，宁可这次不推，也不能拿本地旧档盖上去
       if (!data || !data.updated) return 'bad-remote';
       // 云端比本地新（或本地这台还没拉过）就先让上层去拉，避免把另一台设备的进度盖掉
-      if (data.updated !== localStorage.getItem(APPLIED)) return 'remote-newer';
+      if (data.updated !== localStorage.getItem(APPLIED)) {
+        const synced = !!localStorage.getItem(APPLIED);
+        const cloudTs = Date.parse(data.updated) || 0;
+        const localTs = await newestLocalTs();
+        // 本地更新（且这台设备同步过）就直接推，别被云端的旧版本挡住
+        if (!(synced && localTs && cloudTs && localTs > cloudTs)) return 'remote-newer';
+      }
     } else if (res.status !== 404) {
       return 'no-cloud ' + res.status;
     }
@@ -174,13 +198,15 @@
     },
     pull,
     push,
+    newestLocalTs,
     start(engine) {
       setInterval(() => {
         push().then((r) => {
           if (r === 'remote-newer') return pull(engine);
+          if (r === 'local-newer') return push();
           return null;
         }).catch(() => {});
-      }, 45000);
+      }, 8000);
       window.addEventListener('pagehide', () => { push().catch(() => {}); });
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'hidden') push().catch(() => {});

@@ -64,7 +64,13 @@
   const contexts = [];
   window.__audioContexts = contexts;
   const Wrapped = function (...args) {
-    const ctx = new Native(...args);
+    // 音效滞后：让浏览器按「交互」这一档来排声音，别用省电档的默认缓冲。
+    let opts = args[0];
+    if (opts === undefined) opts = { latencyHint: 'interactive' };
+    else if (opts && typeof opts === 'object' && opts.latencyHint === undefined) {
+      opts = Object.assign({}, opts, { latencyHint: 'interactive' });
+    }
+    const ctx = new Native(opts, ...args.slice(1));
     contexts.push(ctx);
     return ctx;
   };
@@ -136,7 +142,7 @@ window.CLOUDSAVE = {
   files: ["progress.json", "save_1.json", "save_auto.json", "options.json", "last_settings.json"],
 };
 </script>
-<script src="/cloudsave.js"></script>
+<script src="/cloudsave.js?v=2"></script>
 <script src="godot.js"></script>
 <script>
 const GODOT_THREADS_ENABLED = true;
