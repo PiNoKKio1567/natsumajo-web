@@ -74,7 +74,8 @@
     } catch (e) { return null; }
   }
 
-  async function writeLocal(name, bytes) {
+  async function writeLocal(name, bytes, when) {
+    const stampAt = when ? new Date(when) : new Date();
     const db = await idbOpen();
     const path = dir + '/' + name;
     const parts = path.split('/').filter(Boolean);
@@ -82,12 +83,12 @@
     for (let i = 0; i < parts.length - 1; i++) {
       at += '/' + parts[i];
       if (!(await idbGet(db, at))) {
-        await idbPut(db, at, { mode: 16893, timestamp: new Date() });
+        await idbPut(db, at, { mode: 16893, timestamp: stampAt });
       }
     }
     const copy = new Int8Array(bytes.length);
     copy.set(bytes);
-    await idbPut(db, path, { mode: 33206, timestamp: new Date(), contents: copy });
+    await idbPut(db, path, { mode: 33206, timestamp: stampAt, contents: copy });
   }
 
   async function stamp() {
@@ -133,7 +134,7 @@
     // 只有「这台设备以前同步过」时才比较新旧：刚导入的种子文件时间也是新的，不能算数
     const synced = !!localStorage.getItem(APPLIED);
     // 本地有比云端更新的存档（刚存的），先别盖，交给上层推上去
-    if (synced && localTs && cloudTs && localTs > cloudTs) return 'local-newer';
+    if (synced && localTs && cloudTs && localTs > cloudTs + 60000) return 'local-newer';
     let n = 0;
     for (const name of files) {
       const enc = data.files[name];
@@ -142,7 +143,7 @@
       if (engine) {
         try { await engine.preloadFile(bytes.buffer, dir + '/' + name); } catch (e) { console.warn('preload', name, e); }
       }
-      await writeLocal(name, bytes);
+      await writeLocal(name, bytes, cloudTs || undefined);
       n++;
     }
     localStorage.setItem(APPLIED, data.updated);
@@ -165,7 +166,7 @@
         const cloudTs = Date.parse(data.updated) || 0;
         const localTs = await newestLocalTs();
         // 本地更新（且这台设备同步过）就直接推，别被云端的旧版本挡住
-        if (!(synced && localTs && cloudTs && localTs > cloudTs)) return 'remote-newer';
+        if (!(synced && localTs && cloudTs && localTs > cloudTs + 60000)) return 'remote-newer';
       }
     } else if (res.status !== 404) {
       return 'no-cloud ' + res.status;
