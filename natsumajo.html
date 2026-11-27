@@ -203,53 +203,89 @@ const USER_DIR = '/userfs/godot/app_userdata/なつまじょ';
 const IMPORT_SAVE = 'natsumajo.portable.v4';
 const IMPORT_AUDIO = 'natsumajo.audio.v1';
 
+
+// --- keep the imported saves alive -------------------------------------------------------
+// The engine only flushes /userfs to IndexedDB when it closes a file it wrote itself, so a save
+// that arrives through preloadFile/copyToFS lives for one session and is gone on the next visit.
+// Writing the same bytes into the IDBFS store ourselves makes them stick, and their presence (not
+// just a localStorage flag) decides whether an import is still needed — a failed import then heals
+// on the following visit instead of leaving an empty game.
+const IDB_DB = '/userfs';
+const IDB_STORE = 'FILE_DATA';
+const IDB_FILE_MODE = 33206; // 0o100666, what IDBFS writes for save files
+const IDB_DIR_MODE = 16893;  // 0o40755
+
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_DB);
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains(IDB_STORE)) req.result.createObjectStore(IDB_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function idbGetPath(db, path) {
+  return new Promise((resolve) => {
+    const g = db.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE).get(path);
+    g.onsuccess = () => resolve(g.result || null);
+    g.onerror = () => resolve(null);
+  });
+}
+
+async function idbHas(path) {
+  try { return !!(await idbGetPath(await idbOpen(), path)); } catch (e) { return false; }
+}
+
+async function idbPut(db, path, value) {
+  await new Promise((resolve) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put(value, path);
+    tx.oncomplete = resolve;
+    tx.onerror = resolve;
+    tx.onabort = resolve;
+  });
+}
+
+async function idbKeep(path, bytes) {
+  let db;
+  try { db = await idbOpen(); } catch (e) { return; }
+  const parts = path.split('/').filter(Boolean);
+  let dir = '';
+  for (let i = 0; i < parts.length - 1; i++) {
+    dir += '/' + parts[i];
+    if (!(await idbGetPath(db, dir))) await idbPut(db, dir, { mode: IDB_DIR_MODE, timestamp: new Date() });
+  }
+  if (await idbGetPath(db, path)) return; // never clobber newer progress
+  const copy = new Int8Array(bytes.length);
+  copy.set(bytes);
+  await idbPut(db, path, { mode: IDB_FILE_MODE, timestamp: new Date(), contents: copy });
+}
+
+const IMPORT_GROUPS = [
+  { flag: IMPORT_SAVE, files: [{ src: 'portable/save_00.json', dest: 'saves/save_00.json' }] },
+  { flag: IMPORT_AUDIO, files: [{ src: 'portable/config.json', dest: 'config.json' }] },
+];
+
 async function importPortableSave(engine) {
-  const jobs = [];
-  if (!localStorage.getItem(IMPORT_SAVE)) {
-    jobs.push(engine.preloadFile('portable/save_00.json', USER_DIR + '/saves/save_00.json')
-      .then(() => localStorage.setItem(IMPORT_SAVE, '1')));
-  }
-  if (!localStorage.getItem(IMPORT_AUDIO)) {
-    jobs.push(engine.preloadFile('portable/config.json', USER_DIR + '/config.json')
-      .then(() => localStorage.setItem(IMPORT_AUDIO, '1')));
-  }
-  await Promise.all(jobs);
-  return jobs.length;
-}
-
-// One connection to a CDN gets throttled, and this pack is 528 MB, so the loader's single
-// sequential download crawls. Asking for parallel byte ranges instead — each response written
-// straight into its own slice of one buffer — turns N throttled connections into one fast
-// stream. Falls back to a plain download if the host will not serve ranges.
-const PACK_URL = GODOT_CONFIG.mainPack;
-const PACK_SIZE = GODOT_CONFIG.fileSizes[PACK_URL];
-const PACK_STREAMS = 6;
-
-async function fetchPack(onProgress) {
-  const buf = new Uint8Array(PACK_SIZE);
-  const step = Math.ceil(PACK_SIZE / PACK_STREAMS);
-  let got = 0;
-  const parts = [];
-  for (let from = 0; from < PACK_SIZE; from += step) {
-    parts.push([from, Math.min(PACK_SIZE, from + step) - 1]);
-  }
-  await Promise.all(parts.map(async ([from, to]) => {
-    const res = await fetch(PACK_URL, { headers: { Range: 'bytes=' + from + '-' + to } });
-    if (res.status !== 206) throw new Error('this host does not serve byte ranges');
-    const reader = res.body.getReader();
-    let at = from;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf.set(value, at);
-      at += value.length;
-      got += value.length;
-      onProgress(got);
+  let imported = 0;
+  for (const group of IMPORT_GROUPS) {
+    const first = USER_DIR + '/' + group.files[0].dest;
+    if (localStorage.getItem(group.flag) && await idbHas(first)) continue;
+    for (const item of group.files) {
+      const res = await fetch(item.src);
+      if (!res.ok) throw new Error(item.src + ': HTTP ' + res.status);
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      const dest = USER_DIR + '/' + item.dest;
+      await engine.preloadFile(bytes.buffer, dest);
+      await idbKeep(dest, bytes);
     }
-  }));
-  return buf;
+    localStorage.setItem(group.flag, '1');
+    imported++;
+  }
+  return imported;
 }
-
 function boot() {
   startEl.remove();
   loadEl.classList.add('on');
