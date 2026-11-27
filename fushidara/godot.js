@@ -902,6 +902,28 @@ const Engine = (function () {
 	SafeEngine['isAudioWorkletAvailable'] = Features.isAudioWorkletAvailable;
 	SafeEngine['getMissingFeatures'] = Features.getMissingFeatures;
 
+	// --- appended: give the page a direct window onto the writable file system ---
+	// The loader never exposes FS, yet the save files only reach IndexedDB on a clean exit,
+	// which is useless for cloud sync. These four entry points let the page read the live
+	// files, write pulled ones back and force a flush.
+	SafeEngine['fsSync'] = function () { return GodotFS.sync(); };
+	SafeEngine['fsRead'] = function (path) {
+		try { return FS.readFile(path, { encoding: 'binary' }); } catch (e) { return null; }
+	};
+	SafeEngine['fsWrite'] = function (path, data) {
+		const dir = path.slice(0, path.lastIndexOf('/'));
+		try { FS.stat(dir); } catch (e) { FS.mkdirTree(dir); }
+		FS.writeFile(path, new Uint8Array(data));
+		return true;
+	};
+	SafeEngine['fsStat'] = function (path) {
+		try { const st = FS.stat(path); return { mode: st.mode, size: st.size, mtime: st.mtime }; }
+		catch (e) { return null; }
+	};
+	SafeEngine['fsList'] = function (path) {
+		try { return FS.readdir(path).filter((n) => n !== '.' && n !== '..'); } catch (e) { return []; }
+	};
+
 	return SafeEngine;
 }());
 if (typeof window !== 'undefined') {
