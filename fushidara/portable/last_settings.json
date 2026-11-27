@@ -1,0 +1,136 @@
+{
+	"heroines": {
+		"marisa": {
+			"experience": {
+				"pc": false,
+				"rival": false
+			},
+			"fertility": "normal",
+			"relation": {
+				"pc": "stranger",
+				"rival": "stranger"
+			},
+			"traits": {
+				"chastity": "lover_only",
+				"drama": "angry",
+				"fickleness": "careful",
+				"initiative": "active",
+				"jealousy": "easygoing",
+				"libido": "high",
+				"loneliness": "lonely",
+				"mood_swing": "calm",
+				"sensitivity": "sensitive",
+				"sociability": "outgoing"
+			},
+			"type": "default"
+		},
+		"reimu": {
+			"experience": {
+				"pc": false,
+				"rival": false
+			},
+			"fertility": "normal",
+			"relation": {
+				"pc": "stranger",
+				"rival": "stranger"
+			},
+			"traits": {
+				"chastity": "lover_only",
+				"drama": "angry",
+				"fickleness": "devoted",
+				"initiative": "passive",
+				"jealousy": "jealous",
+				"libido": "modest",
+				"loneliness": "fine",
+				"mood_swing": "moody",
+				"sensitivity": "slightly_dull",
+				"sociability": "aloof"
+			},
+			"type": "default"
+		},
+		"sakuya": {
+			"experience": {
+				"pc": false,
+				"rival": false
+			},
+			"fertility": "normal",
+			"relation": {
+				"pc": "stranger",
+				"rival": "stranger"
+			},
+			"traits": {
+				"chastity": "cautious",
+				"drama": "angry",
+				"fickleness": "devoted",
+				"initiative": "passive",
+				"jealousy": "jealous",
+				"libido": "low",
+				"loneliness": "sometimes",
+				"mood_swing": "stable",
+				"sensitivity": "slightly_dull",
+				"sociability": "reserved"
+			},
+			"type": "default"
+		},
+		"sanae": {
+			"experience": {
+				"pc": false,
+				"rival": false
+			},
+			"fertility": "normal",
+			"relation": {
+				"pc": "stranger",
+				"rival": "stranger"
+			},
+			"traits": {
+				"chastity": "moody",
+				"drama": "careless",
+				"fickleness": "fickle",
+				"initiative": "active",
+				"jealousy": "easygoing",
+				"libido": "high",
+				"loneliness": "needy",
+				"mood_swing": "intense",
+				"sensitivity": "sensitive",
+				"sociability": "sociable"
+			},
+			"type": "default"
+		}
+	},
+	"intimacy": {
+		"marisa.reimu": "close",
+		"marisa.sakuya": "normal",
+		"marisa.sanae": "normal",
+		"reimu.sakuya": "normal",
+		"reimu.sanae": "cool",
+		"sakuya.sanae": "normal"
+	},
+	"pc": {
+		"cum_speed": "normal",
+		"name": "悠斗",
+		"size": "large",
+		"skill": 10
+	},
+	"rival": {
+		"assault": true,
+		"blackmail": false,
+		"cum_speed": "normal",
+		"favorite": "random",
+		"lend_demand": false,
+		"name": "拓海",
+		"natural_ntr": true,
+		"night_raid": false,
+		"ntr_hobby": false,
+		"personality": "gentle",
+		"ply_drink": false,
+		"power": "mid",
+		"size": "large",
+		"womanizer": false
+	},
+	"space": {
+		"annex": true,
+		"endless": false,
+		"judge": "normal"
+	},
+	"version": 1
+}
