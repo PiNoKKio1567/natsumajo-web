@@ -139,11 +139,16 @@
 window.CLOUDSAVE = {
   url: 'https://cloudsave-iskz.onrender.com',
   game: 'fushidara',
-  dir: '/userfs/Godot/app_userdata/GodotEra',
-  files: ["progress.json", "save_1.json", "save_auto.json", "options.json", "last_settings.json"],
+  // The game keeps its saves next to the executable (a portable save/ folder), which on the web
+  // resolves to /save at the root of the virtual filesystem — NOT under user://. Writing to
+  // /userfs did nothing because the game never reads there; that was the whole "my save comes
+  // back old after a reload" bug.
+  dir: '/save',
+  extraDirs: ['/userfs/Godot/app_userdata/GodotEra'],
+  files: ["progress.json", "save_1.json", "save_auto.json", "save_0.json", "options.json", "last_settings.json"],
 };
 </script>
-<script src="/cloudsave.js?v=3"></script>
+<script src="/cloudsave.js?v=4"></script>
 <script src="godot.js"></script>
 <script>
 const GODOT_THREADS_ENABLED = true;
@@ -226,7 +231,10 @@ function fail(msg) {
 // This build sets use_custom_user_dir + custom_user_dir_name = Godot/app_userdata/GodotEra, and
 // the web backend maps user:// onto /userfs/<that name> — note the capital G, unlike the default
 // lowercase godot/ the other game uses. Files must land exactly there or the game never sees them.
-const USER_DIR = '/userfs/Godot/app_userdata/GodotEra';
+const USER_DIR = '/save';
+// Keep seeding the old user:// location too: the game migrates it into save/ on first run, and
+// writing both costs nothing while making sure the saves land wherever the game looks.
+const USER_DIRS = ['/save', '/userfs/Godot/app_userdata/GodotEra'];
 // Two separate flags on purpose: the bundled save is imported once and must never be overwritten
 // again (that would erase actual progress), while the settings may need re-tuning later.
 const IMPORT_SAVE = 'fushidara.save.v1';
@@ -307,9 +315,11 @@ async function importPortableSave(engine) {
       const res = await fetch(item.src);
       if (!res.ok) throw new Error(item.src + ': HTTP ' + res.status);
       const bytes = new Uint8Array(await res.arrayBuffer());
-      const dest = USER_DIR + '/' + item.dest;
-      await engine.preloadFile(bytes.buffer, dest);
-      await idbKeep(dest, bytes);
+      for (const base of USER_DIRS) {
+        const dest = base + '/' + item.dest;
+        await engine.preloadFile(bytes.buffer, dest);
+        await idbKeep(dest, bytes);
+      }
     }
     localStorage.setItem(group.flag, '1');
     imported++;
@@ -400,7 +410,12 @@ function boot() {
     .then(() => {
       barEl.style.width = '100%';
       pctEl.textContent = '完成';
-      if (window.CloudSave) CloudSave.start(engine);
+      if (window.CloudSave) {
+        // 启动之后再对一次:游戏自己也会建 /save(里面的文件可能比云端旧),这里补拉一遍,
+        // 保证「刷新后立刻续玩」拿到的是云端最新的那份。
+        CloudSave.pull(engine).catch(() => {}).then(() => CloudSave.push().catch(() => {}));
+        CloudSave.start(engine);
+      }
       setTimeout(() => bootEl.classList.add('gone'), 350);
       canvasEl.focus();
       (window.__audioContexts || []).forEach((c) => { if (c.state === 'suspended') c.resume().catch(() => {}); });

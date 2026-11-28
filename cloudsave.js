@@ -19,7 +19,28 @@
 
   const dir = String(cfg.dir).replace(/\/$/, '');
   const files = cfg.files || [];
+  const extraDirs = (cfg.extraDirs || []).map((d) => String(d).replace(/\/$/, ''));
   const key = () => localStorage.getItem(KEY_ITEM) || '';
+
+  // The engine's real filesystem, exported by our patched godot.js. Reading the live MEMFS is the
+  // only way to see saves the game wrote: it snapshots /userfs into IndexedDB on its own schedule,
+  // and for this game the saves are not even under /userfs. Falls back to IndexedDB when missing.
+  let ENG = null;
+  const isJson = (n) => /\.json$/i.test(n);
+  function fsObj() {
+    try { return ENG && ENG.rtenv && ENG.rtenv.__fs ? ENG.rtenv.__fs : null; } catch (e) { return null; }
+  }
+
+  async function listNames() {
+    const fs = fsObj();
+    if (fs) {
+      try {
+        const names = fs.readdir(dir).filter((n) => n !== '.' && n !== '..' && isJson(n));
+        if (names.length) return names.sort();
+      } catch (e) { /* not there yet */ }
+    }
+    return files.slice();
+  }
 
   const toB64 = (u8) => {
     let s = '';
@@ -66,6 +87,16 @@
   }
 
   async function readLocal(name) {
+    const fs = fsObj();
+    if (fs) {
+      try {
+        const p = dir + '/' + name;
+        const st = fs.stat(p);
+        const buf = fs.readFile(p, { encoding: 'binary' });
+        const when = st && st.mtime ? new Date(st.mtime).getTime() : 0;
+        return { bytes: new Uint8Array(buf), mtime: when };
+      } catch (e) { /* not in memory: fall through to IDB */ }
+    }
     try {
       const db = await idbOpen();
       const rec = await idbGet(db, dir + '/' + name);
@@ -76,6 +107,20 @@
 
   async function writeLocal(name, bytes, when) {
     const stampAt = when ? new Date(when) : new Date();
+    const fs = fsObj();
+    if (fs) {
+      for (const base of [dir].concat(extraDirs)) {
+        try {
+          try { fs.mkdirTree(base); } catch (e) { /* exists */ }
+          const p = base + '/' + name;
+          fs.writeFile(p, new Uint8Array(bytes));
+          try {
+            const secs = stampAt.getTime() / 1000;
+            fs.utime(p, secs, secs);
+          } catch (e) { /* mtime is cosmetic */ }
+        } catch (e) { console.warn('fs write failed', base + '/' + name, e); }
+      }
+    }
     const db = await idbOpen();
     const path = dir + '/' + name;
     const parts = path.split('/').filter(Boolean);
@@ -93,7 +138,7 @@
 
   async function stamp() {
     const bits = [];
-    for (const name of files) {
+    for (const name of await listNames()) {
       const rec = await readLocal(name);
       bits.push(rec ? name + ':' + rec.mtime + ':' + rec.bytes.length : name + ':-');
     }
@@ -104,7 +149,7 @@
   // 不能拿云端去盖它 —— 那是主人刚存下来的进度。
   async function newestLocalTs() {
     let best = 0;
-    for (const name of files) {
+    for (const name of await listNames()) {
       const rec = await readLocal(name);
       const ts = rec && rec.mtime ? rec.mtime : 0;
       if (ts > best) best = ts;
@@ -123,12 +168,14 @@
   }
 
   async function pull(engine) {
+    if (engine) ENG = engine;
     const res = await call('GET');
     if (res.status === 401) { const e = new Error('云存档口令不对'); e.code = 'key'; throw e; }
     if (!res.ok) return 'no-cloud';
     const data = await res.json();
     if (!data || !data.files) return 'empty';
-    if (localStorage.getItem(APPLIED) === data.updated) return 'same';
+    // 逐文件判断,不信版本号:push 成功后也会把 APPLIED 抬到云端版本,那时本地可能缺云端
+    // 才有的文件(比如另一台设备存的快速档),按版本号整批跳过就永远拉不下来。
     const cloudTs = Date.parse(data.updated) || 0;
     const localTs = await newestLocalTs();
     // 只有「这台设备以前同步过」时才比较新旧：刚导入的种子文件时间也是新的，不能算数
@@ -136,19 +183,21 @@
     // 本地有比云端更新的存档（刚存的），先别盖，交给上层推上去
     if (synced && localTs && cloudTs && localTs > cloudTs + 60000) return 'local-newer';
     let n = 0;
-    for (const name of files) {
+    for (const name of Object.keys(data.files)) {
       const enc = data.files[name];
       if (!enc) continue;
       const bytes = fromB64(enc);
+      const rec = await readLocal(name);
+      if (rec && rec.bytes.length === bytes.length) continue; // 大小一致,当作已有同一份
+      await writeLocal(name, bytes, cloudTs || undefined);
       if (engine) {
         try { await engine.preloadFile(bytes.buffer, dir + '/' + name); } catch (e) { console.warn('preload', name, e); }
       }
-      await writeLocal(name, bytes, cloudTs || undefined);
       n++;
     }
     localStorage.setItem(APPLIED, data.updated);
     localStorage.setItem(SENT, await stamp()); // 刚拉下来的就是「已经同步过」的状态
-    return 'pulled ' + n;
+    return n ? 'pulled ' + n : 'same';
   }
 
   async function push() {
@@ -172,7 +221,7 @@
       return 'no-cloud ' + res.status;
     }
     const out = {};
-    for (const name of files) {
+    for (const name of await listNames()) {
       const rec = await readLocal(name);
       if (rec) out[name] = toB64(rec.bytes);
     }
@@ -201,6 +250,7 @@
     push,
     newestLocalTs,
     start(engine) {
+      if (engine) ENG = engine;
       setInterval(() => {
         push().then((r) => {
           if (r === 'remote-newer') return pull(engine);
